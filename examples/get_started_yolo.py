@@ -20,12 +20,13 @@ from io import BytesIO
 import torch
 
 from art.estimators.object_detection.pytorch_yolo import PyTorchYolo
-from art.attacks.evasion import ProjectedGradientDescent
+from art.attacks.evasion import ProjectedGradientDescent, FastGradientMethod
 
 import cv2
 import matplotlib
 import matplotlib.pyplot as plt
 
+# from examples.inverse_gan_author_utils import weight_init
 
 """
 #################        Helper functions and labels          #################
@@ -113,12 +114,137 @@ COCO_INSTANCE_CATEGORY_NAMES = [
     "hair drier",
     "toothbrush",
 ]
+cocw_names = ['Not Car',
+'Other',
+'Pickup',
+'Sedan',
+'Unknown'
+]
+tt2021_names= [
+'i1',
+'i10',
+'i11',
+'i12',
+'i13',
+'i14',
+'i15',
+'i2',
+'i3',
+'i4',
+'i5',
+'il',
+'im',
+'ip',
+'iz',
+'p1',
+'p10',
+'p11',
+'p12',
+'p13',
+'p14',
+'p15',
+'p16',
+'p17',
+'p18',
+'p19',
+'p1n',
+'p2',
+'p20',
+'p21',
+'p23',
+'p24',
+'p25',
+'p26',
+'p27',
+'p28',
+'p29',
+'p3',
+'p4',
+'p5',
+'p6',
+'p7',
+'p8',
+'p9',
+'pa',
+'pb',
+'pbm',
+'pbp',
+'pc',
+'pcd',
+'pcl',
+'pclr',
+'pcr',
+'pcs',
+'pctl',
+'pdd',
+'pg',
+'ph',
+'phclr',
+'phcs',
+'pl',
+'pm',
+'pmb',
+'pmblr',
+'pmr',
+'pn',
+'pne',
+'pnlc',
+'pr',
+'ps',
+'pss',
+'pt',
+'pw',
+'w1',
+'w10',
+'w12',
+'w13',
+'w14',
+'w15',
+'w16',
+'w18',
+'w20',
+'w21',
+'w22',
+'w24',
+'w26',
+'w28',
+'w3',
+'w30',
+'w31',
+'w32',
+'w34',
+'w35',
+'w37',
+'w38',
+'w41',
+'w42',
+'w43',
+'w44',
+'w45',
+'w46',
+'w47',
+'w48',
+'w49',
+'w5',
+'w50',
+'w55',
+'w56',
+'w57',
+'w58',
+'w59',
+'w60',
+'w62',
+'w63',
+'w66',
+'w8',
+'wc'
+]
 
 
 def extract_predictions(predictions_, conf_thresh):
     # Get the predicted class
-    predictions_class = [COCO_INSTANCE_CATEGORY_NAMES[i] for i in list(predictions_["labels"])]
-    #  print("\npredicted classes:", predictions_class)
+    predictions_class = [tt2021_names[i] for i in list(predictions_["labels"])]
+    # print("\npredicted classes:", predictions_class)
     if len(predictions_class) < 1:
         return [], [], []
     # Get the predicted bounding boxes
@@ -176,7 +302,7 @@ def plot_image_with_boxes(img, boxes, pred_cls, title):
 """
 #################        Evasion settings        #################
 """
-eps = 32
+eps = 20
 eps_step = 2
 max_iter = 10
 
@@ -206,8 +332,10 @@ if MODEL == "yolov3":
             else:
                 return self.model(x)
 
-    model_path = "./yolov3.cfg"
-    weights_path = "./yolov3.weights"
+    # model_path = "./yolov3-cowc.cfg"
+    # weights_path = "./yolov3-cowc_best_256.weights"
+    model_path = 'E:/darknet/cfg/yolov3-tiny.cfg'
+    weights_path = 'E:/darknet/backup/yolov3-tiny_500000.weights'
     model = load_model(model_path=model_path, weights_path=weights_path)
 
     model = Yolo(model)
@@ -259,8 +387,14 @@ elif MODEL == "yolov5":
 """
 #################        Example image        #################
 """
-response = requests.get("https://ultralytics.com/images/zidane.jpg")
-img = np.asarray(Image.open(BytesIO(response.content)).resize((640, 640)))
+# response = requests.get("https://ultralytics.com/images/zidane.jpg")
+# img = np.asarray(Image.open(BytesIO(response.content)).resize((640, 640)))
+# 读取本地图片 + 调整尺寸 + 转换BGR到RGB（OpenCV默认读入BGR格式）
+# img = cv2.imread(r"E:\git project\adversarial-yolov3-cowc\#sidestreet\data\test_images\MVI_0032458.jpg")
+img = cv2.imread(r"E:\Tsinghua Data\tt100k_2021-yolo\tt100k_yolo\images\2.jpg")
+img = cv2.resize(img, (640, 640))  # 注意是函数调用，不是方法
+img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # 转为RGB格式（与原始代码一致）
+
 img_reshape = img.transpose((2, 0, 1))
 image = np.stack([img_reshape], axis=0).astype(np.float32)
 x = image.copy()
@@ -269,8 +403,26 @@ x = image.copy()
 #################        Evasion attack        #################
 """
 
-attack = ProjectedGradientDescent(estimator=detector, eps=eps, eps_step=eps_step, max_iter=max_iter)
+# attack = ProjectedGradientDescent(estimator=detector, eps=eps, eps_step=eps_step, max_iter=max_iter)
+attack =FastGradientMethod(estimator=detector, eps=eps, eps_step=eps_step,summary_writer = True)
 image_adv = attack.generate(x=x, y=None)
+#沿y轴正态分布调整对抗样本
+height = x.shape[2]
+print("Original shape:", x.shape)
+adv_x_adjusted = attack.apply_intensity_distribution(
+    image_adv,
+    x,
+    mean=height//2,
+    std=height//4,
+    height_axis=2
+)
+# print("Adjusted shape:", adv_x_adjusted.shape)
+print("Min:", adv_x_adjusted.min(), "Max:", adv_x_adjusted.max())
+
+plt.axis("off")
+plt.title("adjest image")
+plt.imshow(adv_x_adjusted[0].transpose(1, 2, 0).astype(np.uint8), interpolation="nearest")
+plt.show()
 
 print("\nThe attack budget eps is {}".format(eps))
 print("The resulting maximal difference in pixel values is {}.".format(np.amax(np.abs(x - image_adv))))
@@ -280,10 +432,19 @@ plt.title("adversarial image")
 plt.imshow(image_adv[0].transpose(1, 2, 0).astype(np.uint8), interpolation="nearest")
 plt.show()
 
-threshold = 0.85  # 0.5
+threshold = 0.6  # 0.5
 dets = detector.predict(x)
 preds = extract_predictions(dets[0], threshold)
 plot_image_with_boxes(img=img, boxes=preds[1], pred_cls=preds[0], title="Predictions on original image")
+
+dets_adjusted = detector.predict(adv_x_adjusted)
+preds_adjusted = extract_predictions(dets_adjusted[0], threshold)
+plot_image_with_boxes(
+    img=adv_x_adjusted[0].transpose(1, 2, 0).copy(),
+    boxes=preds_adjusted[1],
+    pred_cls=preds_adjusted[0],
+    title="Predictions on adjusted adversarial image",
+)
 
 dets = detector.predict(image_adv)
 preds = extract_predictions(dets[0], threshold)
